@@ -1,0 +1,21 @@
+# Build artifacts
+[Bb]in/
+[Oo]bj/
+.vs/
+.vscode/
+
+# Logs
+Logs/
+*.log
+
+# User-specific
+*.user
+*.suo
+*.userprefs
+
+# OS generated
+.DS_Store
+Thumbs.db
+
+# Secrets
+appsettings.json

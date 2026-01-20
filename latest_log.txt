@@ -1,0 +1,132 @@
+[2025-12-25 16:07:24.195] [INFO ] [001] === Logger initialized ===
+[2025-12-25 16:07:24.822] [INFO ] [001] Collective2Client initialized for strategy: 153146487
+[2025-12-25 16:07:24.833] [INFO ] [001] Attempting to connect to IB TWS/Gateway at 127.0.0.1:7497
+[2025-12-25 16:07:24.877] [INFO ] [001] Successfully connected to IB TWS/Gateway
+[2025-12-25 16:07:24.879] [INFO ] [001] Starting real-time position monitoring
+[2025-12-25 16:07:24.881] [ERROR] [006] IB Error 326: Unable to connect as the client id is already in use. Retry with a unique client id.
+[2025-12-25 16:07:24.881] [INFO ] [001] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:24.884] [ERROR] [005] IB Error: Unable to read beyond the end of the stream.
+[2025-12-25 16:07:24.890] [ERROR] [001] IB Error 540: Request Positions Sending Error - 
+[2025-12-25 16:07:24.891] [ERROR] [001] IB connection closed
+[2025-12-25 16:07:24.892] [ERROR] [001] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:24.893] [ERROR] [001] IB connection closed
+[2025-12-25 16:07:24.893] [ERROR] [001] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:24.896] [DEBUG] [001] Requesting positions from Collective2
+[2025-12-25 16:07:25.246] [WARN ] [008] C2 API retry 1 after 2s. Reason: NotFound
+[2025-12-25 16:07:27.285] [WARN ] [008] C2 API retry 2 after 4s. Reason: NotFound
+[2025-12-25 16:07:29.903] [INFO ] [006] Attempting to connect to IB TWS/Gateway at 127.0.0.1:7497
+[2025-12-25 16:07:29.907] [INFO ] [006] Successfully connected to IB TWS/Gateway
+[2025-12-25 16:07:29.908] [INFO ] [006] Starting real-time position monitoring
+[2025-12-25 16:07:29.908] [ERROR] [008] IB Error 326: Unable to connect as the client id is already in use. Retry with a unique client id.
+[2025-12-25 16:07:29.908] [INFO ] [006] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:29.908] [ERROR] [012] IB Error: Unable to read beyond the end of the stream.
+[2025-12-25 16:07:29.910] [INFO ] [011] Already connected to IB
+[2025-12-25 16:07:29.910] [INFO ] [006] Successfully reconnected to IB
+[2025-12-25 16:07:29.910] [INFO ] [011] Starting real-time position monitoring
+[2025-12-25 16:07:29.910] [ERROR] [011] IB Error 540: Request Positions Sending Error - 
+[2025-12-25 16:07:29.911] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:29.911] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:29.911] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:29.911] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:29.911] [ERROR] [011] IB Error 504: Not connected
+[2025-12-25 16:07:29.911] [INFO ] [011] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:29.913] [INFO ] [011] Successfully reconnected to IB
+[2025-12-25 16:07:31.331] [WARN ] [011] C2 API retry 3 after 8s. Reason: NotFound
+[2025-12-25 16:07:34.896] [WARN ] [008] Timeout waiting for positions from IB
+[2025-12-25 16:07:34.926] [INFO ] [011] Attempting to connect to IB TWS/Gateway at 127.0.0.1:7497
+[2025-12-25 16:07:34.929] [INFO ] [011] Successfully connected to IB TWS/Gateway
+[2025-12-25 16:07:34.930] [INFO ] [011] Starting real-time position monitoring
+[2025-12-25 16:07:34.930] [INFO ] [011] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:34.930] [INFO ] [011] Successfully reconnected to IB
+[2025-12-25 16:07:34.930] [INFO ] [011] Already connected to IB
+[2025-12-25 16:07:34.930] [INFO ] [011] Starting real-time position monitoring
+[2025-12-25 16:07:34.931] [ERROR] [011] IB Error 540: Request Positions Sending Error - 
+[2025-12-25 16:07:34.931] [ERROR] [014] IB Error: Unable to read beyond the end of the stream.
+[2025-12-25 16:07:34.931] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:34.931] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:34.932] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:34.932] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:34.932] [ERROR] [011] IB Error 504: Not connected
+[2025-12-25 16:07:34.932] [INFO ] [011] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:34.932] [INFO ] [011] Successfully reconnected to IB
+[2025-12-25 16:07:39.373] [ERROR] [011] Failed to get C2 positions. Status: NotFound, Content: <html>
+<head>
+<title>404 - NOT FOUND</title>
+<meta http-equiv="refresh" content="3; URL='/'" />
+
+
+<style>
+h1
+{
+	color : rgb( 0, 0, 0 );
+	font-size : 36px;
+	font-weight : bold;
+	font-family : Verdana;
+}
+h3
+{
+	color : rgb( 208, 77,0 );
+	font-size : 18px;
+	font-family : Verdana;
+}
+h1
+</style>
+
+<script type="text/javascript">
+	
+	setTimeout
+	(
+		function()
+		{
+			window.location.href = "/";
+		},
+		3333
+	);
+	
+</script>
+
+</head>
+<body bgcolor="white" text="black">
+<br><br><br>
+<center>
+<a href="/" style="text-decoration: none;"><h1>404 - NOT FOUND</h1></a>
+
+<h3><i>REDIRECTING YOU BACK IN 3, 2, 1...</i><h3>
+</center>
+</body>
+</html>
+
+[2025-12-25 16:07:39.376] [DEBUG] [006] Starting position comparison: 0 IB positions vs 0 C2 positions
+[2025-12-25 16:07:39.942] [INFO ] [011] Attempting to connect to IB TWS/Gateway at 127.0.0.1:7497
+[2025-12-25 16:07:39.950] [INFO ] [011] Successfully connected to IB TWS/Gateway
+[2025-12-25 16:07:39.953] [INFO ] [011] Starting real-time position monitoring
+[2025-12-25 16:07:39.954] [INFO ] [011] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:39.954] [ERROR] [015] IB Error: Unable to read beyond the end of the stream.
+[2025-12-25 16:07:39.955] [INFO ] [011] Successfully reconnected to IB
+[2025-12-25 16:07:39.956] [INFO ] [011] Already connected to IB
+[2025-12-25 16:07:39.956] [INFO ] [011] Starting real-time position monitoring
+[2025-12-25 16:07:39.956] [ERROR] [011] IB Error 540: Request Positions Sending Error - 
+[2025-12-25 16:07:39.957] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:39.957] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:39.957] [ERROR] [011] IB connection closed
+[2025-12-25 16:07:39.958] [ERROR] [011] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:39.958] [ERROR] [011] IB Error 504: Not connected
+[2025-12-25 16:07:39.958] [INFO ] [011] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:39.959] [INFO ] [011] Successfully reconnected to IB
+[2025-12-25 16:07:44.969] [INFO ] [016] Attempting to connect to IB TWS/Gateway at 127.0.0.1:7497
+[2025-12-25 16:07:44.977] [INFO ] [016] Successfully connected to IB TWS/Gateway
+[2025-12-25 16:07:44.981] [INFO ] [016] Starting real-time position monitoring
+[2025-12-25 16:07:44.981] [ERROR] [011] IB Error 326: Unable to connect as the client id is already in use. Retry with a unique client id.
+[2025-12-25 16:07:44.982] [ERROR] [017] IB Error: Unable to read beyond the end of the stream.
+[2025-12-25 16:07:44.981] [INFO ] [008] Already connected to IB
+[2025-12-25 16:07:44.984] [INFO ] [008] Starting real-time position monitoring
+[2025-12-25 16:07:44.981] [INFO ] [016] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:44.986] [INFO ] [016] Successfully reconnected to IB
+[2025-12-25 16:07:44.985] [ERROR] [008] IB Error 540: Request Positions Sending Error - 
+[2025-12-25 16:07:44.988] [ERROR] [008] IB connection closed
+[2025-12-25 16:07:44.988] [ERROR] [008] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:44.989] [ERROR] [008] IB connection closed
+[2025-12-25 16:07:44.989] [ERROR] [008] IB connection lost. Attempting to reconnect...
+[2025-12-25 16:07:44.990] [ERROR] [008] IB Error 504: Not connected
+[2025-12-25 16:07:44.990] [INFO ] [008] Real-time monitoring subscriptions activated
+[2025-12-25 16:07:44.991] [INFO ] [008] Successfully reconnected to IB
