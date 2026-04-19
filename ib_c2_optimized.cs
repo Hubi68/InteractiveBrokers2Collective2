@@ -1033,6 +1033,8 @@ namespace IBCollective2Sync
         private readonly FileLogger _logger;
         private const string BaseUrl = "https://api4-general.collective2.com";
         private readonly IAsyncPolicy<HttpResponseMessage> _retryPolicy;
+        private readonly IAsyncPolicy<HttpResponseMessage> _circuitBreakerPolicy;
+        private readonly IAsyncPolicy<HttpResponseMessage> _resilientPolicy;
         private readonly SemaphoreSlim _rateLimiter;
         private static readonly JsonSerializerOptions _jsonOptions = new JsonSerializerOptions 
         { 
@@ -1064,8 +1066,25 @@ namespace IBCollective2Sync
                         _logger.Warn($"C2 API retry {retryCount} after {timespan.TotalSeconds}s. Reason: {reason}");
                     });
 
+            _circuitBreakerPolicy = Policy
+                .HandleResult<HttpResponseMessage>(r => !r.IsSuccessStatusCode && r.StatusCode != System.Net.HttpStatusCode.BadRequest)
+                .Or<TaskCanceledException>()
+                .Or<HttpRequestException>()
+                .CircuitBreakerAsync(
+                    handledEventsAllowedBeforeBreaking: 5,
+                    durationOfBreak: TimeSpan.FromMinutes(1),
+                    onBreak: (outcome, breakDelay) =>
+                    {
+                        _logger.Error($"C2 API circuit breaker OPEN for {breakDelay.TotalSeconds}s. Last reason: {outcome.Result?.StatusCode.ToString() ?? outcome.Exception?.Message}");
+                    },
+                    onReset: () => _logger.Info("C2 API circuit breaker CLOSED - resuming requests"),
+                    onHalfOpen: () => _logger.Info("C2 API circuit breaker HALF-OPEN - testing connection"));
+
+            // Wrap: retry sits inside the circuit breaker
+            _resilientPolicy = Policy.WrapAsync(_circuitBreakerPolicy, _retryPolicy);
+
             _rateLimiter = new SemaphoreSlim(10, 10);
-            
+
             _logger.Info($"Collective2Client initialized for strategy: {strategyId}");
         }
 
@@ -1080,7 +1099,7 @@ namespace IBCollective2Sync
                 // Parameter: StrategyIds (plural, array)
                 var url = $"{BaseUrl}/Strategies/GetStrategyOpenPositions?StrategyIds={_strategyId}";
 
-                var response = await _retryPolicy.ExecuteAsync(async () =>
+                var response = await _resilientPolicy.ExecuteAsync(async () =>
                     await _httpClient.GetAsync(url));
 
                 if (response.IsSuccessStatusCode)
@@ -1159,7 +1178,7 @@ namespace IBCollective2Sync
 
                 _logger.Debug($"C2 Signal payload: {json}");
 
-                var response = await _retryPolicy.ExecuteAsync(async () =>
+                var response = await _resilientPolicy.ExecuteAsync(async () =>
                     await _httpClient.PostAsync($"{BaseUrl}/Strategies/NewStrategyOrder", content));
 
                 var responseText = await response.Content.ReadAsStringAsync();
