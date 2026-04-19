@@ -286,7 +286,7 @@ namespace IBCollective2Sync
                     _logger.Info(syncMessage);
                     Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {syncMessage}");
 
-                    await ExecutePositionSync(symbol, newQuantity, c2Quantity, quantityDiff, secType);
+                    await ExecutePositionSync(symbol, newQuantity, c2Quantity, secType);
                 }
                 else
                 {
@@ -310,7 +310,7 @@ namespace IBCollective2Sync
             }
         }
 
-        private static async Task ExecutePositionSync(string symbol, double ibQuantity, double c2Quantity, double quantityDiff, string secType)
+        private static async Task ExecutePositionSync(string symbol, double ibQuantity, double c2Quantity, string secType)
         {
             var decision = SyncLogic.DetermineAction(ibQuantity, c2Quantity, _config.MinimumQuantityThreshold);
             if (decision == null)
