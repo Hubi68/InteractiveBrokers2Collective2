@@ -23,7 +23,7 @@ namespace IBCollective2Sync
         private static IBClient? _ibClient;
         private static Collective2Client? _c2Client;
         private static Timer? _syncTimer;
-        private static readonly SemaphoreSlim _syncSemaphore = new SemaphoreSlim(1, 1);
+        private static readonly ConcurrentDictionary<string, SemaphoreSlim> _symbolSemaphores = new ConcurrentDictionary<string, SemaphoreSlim>();
         private static FileLogger? _logger;
         private static readonly CancellationTokenSource _cancellationTokenSource = new CancellationTokenSource();
         private static Configuration? _config;
@@ -32,23 +32,23 @@ namespace IBCollective2Sync
         public static async Task Main(string[] args)
         {
             Console.WriteLine("IB-Collective2 Portfolio Sync Starting...");
-            
-            // Start maintenance window monitor
-            _ = MonitorMaintenanceWindow();
 
             try
             {
                 _config = Configuration.Load();
                 _logger = new FileLogger("IBCollective2Sync");
-                
 
-                
+
+
                 _ibClient = new IBClient(_logger, _config);
                 _c2Client = new Collective2Client(_config.C2ApiKey, _config.C2StrategyId, _logger);
 
                 _ibClient.OnPositionChanged += OnPositionChanged;
                 _ibClient.OnTradeExecuted += OnTradeExecuted;
                 _ibClient.OnConnectionLost += OnConnectionLost;
+
+                // Start maintenance monitor AFTER logger and clients are initialized
+                _ = MonitorMaintenanceWindow();
 
                 await ConnectWithRetry();
 
@@ -131,22 +131,33 @@ namespace IBCollective2Sync
 
         private static async Task MonitorMaintenanceWindow()
         {
-            _logger.Info("Starting TWS Maintenance Window Monitor (01:30 - 02:00)");
+            _logger.Info("Starting TWS Maintenance Window Monitor (00:00 - 02:00 EST)");
             
             while (!_cancellationTokenSource.Token.IsCancellationRequested)
             {
                 try 
                 {
-                    var now = DateTime.Now.TimeOfDay;
-                    var start = new TimeSpan(1, 30, 0); // 01:30 AM
+                    var easternZone = TimeZoneInfo.FindSystemTimeZoneById("Eastern Standard Time");
+                    var utcNow = DateTime.UtcNow;
+                    var easternTime = TimeZoneInfo.ConvertTimeFromUtc(utcNow, easternZone).TimeOfDay;
+                    
+                    // DEBUG LOGGING to verify logic
+                    if (utcNow.Second == 0 && utcNow.Minute % 5 == 0) // Log every 5 mins
+                    {
+                         string msg = $"Maintenance Monitor: UTC={utcNow:HH:mm:ss}, EST={easternTime}, InMaintenance={_isInMaintenanceMode}";
+                         Console.WriteLine(msg);
+                         _logger.Debug(msg);
+                    }
+
+                    var start = new TimeSpan(0, 0, 0); // 00:00 AM (Midnight)
                     var end = new TimeSpan(2, 0, 0);    // 02:00 AM
 
-                    if (now >= start && now < end)
+                    if (easternTime >= start && easternTime < end)
                     {
                         if (!_isInMaintenanceMode)
                         {
                             _isInMaintenanceMode = true;
-                            _logger.Info("Entering TWS maintenance window (01:30 - 02:00). Disconnecting...");
+                            _logger.Info("Entering TWS maintenance window (00:00 - 02:00 EST). Disconnecting...");
                             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Entering TWS maintenance window. Disconnecting...");
                             if (_ibClient != null) await _ibClient.DisconnectAsync();
                         }
@@ -203,7 +214,7 @@ namespace IBCollective2Sync
             
             await Task.Delay(_config.PositionChangeDebounceMs, _cancellationTokenSource.Token);
             
-            await SyncSpecificPosition(e.Symbol, e.NewQuantity);
+            await SyncSpecificPosition(e.Symbol, 0);
         }
 
         private static async Task OnTradeExecuted(TradeExecutedEventArgs e)
@@ -213,7 +224,15 @@ namespace IBCollective2Sync
             Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {message}");
             
             await Task.Delay(_config.TradeExecutionDelayMs, _cancellationTokenSource.Token);
-            await SyncSpecificPosition(e.Symbol, e.NewPosition);
+
+            // Fetch fresh position from cache after delay to ensure we have the latest update
+            // We pass 0 as dummy because SyncSpecificPosition now fetches fresh data internally
+            await SyncSpecificPosition(e.Symbol, 0); 
+        }
+
+        private static SemaphoreSlim GetSymbolLock(string symbol)
+        {
+            return _symbolSemaphores.GetOrAdd(symbol, _ => new SemaphoreSlim(1, 1));
         }
 
         private static async Task BackupSync()
@@ -244,7 +263,7 @@ namespace IBCollective2Sync
             }
         }
 
-        private static async Task SyncSpecificPosition(string symbol, double newQuantity)
+        private static async Task SyncSpecificPosition(string symbol, double dummyQuantity)
         {
             if (IsWeekendMarketClosed())
             {
@@ -252,13 +271,18 @@ namespace IBCollective2Sync
                  return;
             }
 
-            await _syncSemaphore.WaitAsync(_cancellationTokenSource.Token);
+            var positionLock = GetSymbolLock(symbol);
+            await positionLock.WaitAsync(_cancellationTokenSource.Token);
             try
             {
                 _logger.Debug($"Starting sync for specific position: {symbol}");
+
+                // CRITICAL FIX: Always fetch the latest cached position from IB client inside the lock.
+                // This prevents using stale data if multiple events were queued.
+                var newQuantity = _ibClient.GetCachedPosition(symbol);
                 
                 var c2Positions = await _c2Client.GetPositionsWithRetryAsync();
-                var c2Position = c2Positions.FirstOrDefault(p => p.Symbol == symbol);
+                var c2Position = c2Positions?.FirstOrDefault(p => p.Symbol == symbol);
                 var c2Quantity = c2Position?.Quantity ?? 0;
 
                 var quantityDiff = newQuantity - c2Quantity;
@@ -291,7 +315,7 @@ namespace IBCollective2Sync
             }
             finally
             {
-                _syncSemaphore.Release();
+                positionLock.Release();
             }
         }
 
@@ -301,16 +325,20 @@ namespace IBCollective2Sync
             {
                 if (Math.Abs(c2Quantity) > _config.MinimumQuantityThreshold)
                 {
-                    // If C2 is Short (negative), Buy to Close (BTO). If Long (positive), Sell to Close (STC).
-                    string action = c2Quantity < 0 ? "BTO" : "STC";
+                    // If C2 is Short (negative), Buy to Close (BTC). If Long (positive), Sell to Close (STC).
+                    string action = c2Quantity < 0 ? "BTC" : "STC";
                     _logger.Info($"Closing C2 position: {action} {Math.Abs(c2Quantity)} {symbol}");
                     await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity));
                 }
             }
             else if (quantityDiff > 0)
             {
-                _logger.Info($"Increasing C2 position: BTO {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, "BTO", Math.Abs(quantityDiff));
+                // Buying
+                // If C2 is Short (<0), Buy to Close (BTC).
+                // If C2 is Flat or Long (>=0), Buy to Open (BTO).
+                string action = c2Quantity < 0 ? "BTC" : "BTO";
+                _logger.Info($"Increasing C2 position: {action} {Math.Abs(quantityDiff)} {symbol}");
+                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff));
             }
             else
             {
@@ -322,6 +350,28 @@ namespace IBCollective2Sync
 
                 _logger.Info($"{logAction}: {action} {Math.Abs(quantityDiff)} {symbol}");
                 await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff));
+            }
+
+            // Post-Trade Verification Delay
+            if (_config.PostTradeCheckDelaySeconds > 0)
+            {
+                _logger.Info($"Waiting {_config.PostTradeCheckDelaySeconds} seconds for C2 execution verification on {symbol}...");
+                await Task.Delay(_config.PostTradeCheckDelaySeconds * 1000, _cancellationTokenSource.Token);
+
+                // Re-fetch C2 positions to verify Sync
+                var freshC2Positions = await _c2Client.GetPositionsWithRetryAsync();
+                if (freshC2Positions != null)
+                {
+                    var freshC2Qty = freshC2Positions.FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0;
+                    if (Math.Abs(ibQuantity - freshC2Qty) < _config.MinimumQuantityThreshold)
+                    {
+                         _logger.Info($"Verification Successful: {symbol} is in sync (IB={ibQuantity}, C2={freshC2Qty}).");
+                    }
+                    else
+                    {
+                         _logger.Warn($"Verification Warning: {symbol} execution might be pending or failed. IB={ibQuantity}, C2={freshC2Qty}.");
+                    }
+                }
             }
         }
 
@@ -336,7 +386,9 @@ namespace IBCollective2Sync
                 return;
             }
             
-            await _syncSemaphore.WaitAsync(_cancellationTokenSource.Token);
+            // NOTE: We do NOT take a global lock here anymore.
+            // We allow the sync to inspect all positions and then lock per-symbol if action is needed.
+            
             try
             {
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Starting full portfolio sync...");
@@ -369,10 +421,6 @@ namespace IBCollective2Sync
                 _logger.Error($"Portfolio sync error: {ex.Message}", ex);
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Sync error: {ex.Message}");
             }
-            finally
-            {
-                _syncSemaphore.Release();
-            }
         }
 
         private static async Task SyncPositions(List<Position> ibPositions, List<Position> c2Positions)
@@ -380,8 +428,9 @@ namespace IBCollective2Sync
             var c2PositionDict = c2Positions.ToDictionary(p => p.Symbol, p => p);
             _logger.Debug($"Starting position comparison: {ibPositions.Count} IB positions vs {c2Positions.Count} C2 positions");
 
-            var signalsToSubmit = new List<(string Symbol, string Action, double Quantity)>();
+            var symbolsToSync = new HashSet<string>();
 
+            // 1. Identify IB positions that differ from C2
             foreach (var ibPosition in ibPositions.Where(p => Math.Abs(p.Quantity) >= _config.MinimumQuantityThreshold))
             {
                 var c2Quantity = c2PositionDict.GetValueOrDefault(ibPosition.Symbol)?.Quantity ?? 0;
@@ -389,35 +438,23 @@ namespace IBCollective2Sync
 
                 if (Math.Abs(quantityDiff) > _config.MinimumQuantityThreshold)
                 {
-                    var mismatchMessage = $"Position mismatch - {ibPosition.Symbol}: IB={ibPosition.Quantity}, C2={c2Quantity}";
-                    _logger.Warn(mismatchMessage);
-                    Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {mismatchMessage}");
-                    
-                    signalsToSubmit.Add((
-                        ibPosition.Symbol, 
-                        quantityDiff > 0 ? "BTO" : "STC", 
-                        Math.Abs(quantityDiff)
-                    ));
+                    symbolsToSync.Add(ibPosition.Symbol);
                 }
 
                 c2PositionDict.Remove(ibPosition.Symbol);
             }
 
+            // 2. Identify Orphans (C2 has position, IB does not/is zero)
             foreach (var c2Position in c2PositionDict.Values.Where(p => Math.Abs(p.Quantity) >= _config.MinimumQuantityThreshold))
             {
-                var closeMessage = $"Closing orphaned C2 position: {c2Position.Symbol} ({c2Position.Quantity})";
-                _logger.Info(closeMessage);
-                Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {closeMessage}");
-                
-                // If Short (negative), Buy to Close (BTO). If Long (positive), Sell to Close (STC).
-                string action = c2Position.Quantity < 0 ? "BTO" : "STC";
-                signalsToSubmit.Add((c2Position.Symbol, action, Math.Abs(c2Position.Quantity)));
+                symbolsToSync.Add(c2Position.Symbol);
             }
 
-            foreach (var signal in signalsToSubmit)
+            // 3. Delegate to robust sync
+            foreach (var symbol in symbolsToSync)
             {
-                await _c2Client.SubmitSignalWithRetryAsync(signal.Symbol, signal.Action, signal.Quantity);
-                await Task.Delay(_config.SignalSubmissionDelayMs, _cancellationTokenSource.Token);
+                // We pass 0 because SyncSpecificPosition will re-fetch the authoritative IB position inside the lock
+                await SyncSpecificPosition(symbol, 0);
             }
         }
 
@@ -465,6 +502,7 @@ namespace IBCollective2Sync
         public int TradeExecutionDelayMs { get; set; } = 1000;
         public double MinimumQuantityThreshold { get; set; } = 0.01;
         public int SignalSubmissionDelayMs { get; set; } = 100;
+        public int PostTradeCheckDelaySeconds { get; set; } = 60;
         public int HttpTimeoutSeconds { get; set; } = 30;
         public int MaxRetryAttempts { get; set; } = 3;
 
@@ -499,11 +537,19 @@ namespace IBCollective2Sync
                     : $"{contract.Symbol}{contract.LastTradeDateOrContractMonth}"; 
 
                 // Special Mappings (Hardcoded legacy fallback or remove if fully config driven)
+                // Special Mappings (Hardcoded legacy fallback or remove if fully config driven)
                 // Keeping Micro Gold hardcode just in case config is missing, but config takes precedence above.
                 if (symbol.StartsWith("MGC"))
                 {
                     symbol = "QMGC" + symbol.Substring(3);
                 }
+
+                // FIX: Ensure 2-digit years for C2 compatibility (e.g., MESH6 -> MESH26)
+                // Matches a letter followed by a single digit at the end of the string.
+                // Replace with Letter + "2" + Digit.
+                // usage of ${1} creates unambiguous reference to group 1
+                // DISABLED: This logic breaks MBT (Micro Bitcoin) which expects @MBTG6 (1-digit year)
+                // symbol = Regex.Replace(symbol, @"([A-Z])([0-9])$", "${1}2$2");
 
                 if (!symbol.StartsWith("@"))
                     return "@" + symbol;
@@ -554,7 +600,7 @@ namespace IBCollective2Sync
         public double Quantity { get; set; }
         public double AvgCost { get; set; }
         public string SecType { get; set; } = string.Empty;
-        public DateTime LastUpdated { get; set; } = DateTime.UtcNow;
+        public DateTime LastUpdated { get; set; } = DateTime.Now;
     }
 
     public class IBClient
@@ -563,7 +609,11 @@ namespace IBCollective2Sync
         private IBWrapper _wrapper;
         private readonly EReaderMonitorSignal _signal = new EReaderMonitorSignal();
         private readonly ConcurrentDictionary<string, Position> _positions = new ConcurrentDictionary<string, Position>();
-        private TaskCompletionSource<bool> _positionsReceived;
+        // Polling primitives
+        private readonly SemaphoreSlim _refreshSemaphore = new SemaphoreSlim(1, 1);
+        private TaskCompletionSource<bool>? _refreshTcs;
+        private ConcurrentDictionary<string, byte>? _refreshSeenSymbols;
+        
         private readonly FileLogger _logger;
         private readonly Configuration _config;
         private readonly SemaphoreSlim _connectionSemaphore = new SemaphoreSlim(1, 1);
@@ -599,6 +649,9 @@ namespace IBCollective2Sync
                 
                 Console.WriteLine($"Connecting to IB TWS/Gateway at {host}:{port} (Client ID: {clientId})...");
                 
+                // Clear state on new connection attempt
+                _positions.Clear();
+
                 _clientSocket.eConnect(host, port, clientId);
                 
                 using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
@@ -642,7 +695,7 @@ namespace IBCollective2Sync
         {
             _logger.Info("Starting real-time position monitoring");
             
-            _clientSocket.reqPositions();
+            // We do NOT call reqPositions here anymore. We poll it on demand.
             _clientSocket.reqExecutions(_nextOrderId++, new ExecutionFilter());
 
             _logger.Info("Real-time monitoring subscriptions activated");
@@ -674,26 +727,87 @@ namespace IBCollective2Sync
         {
             if (!_isConnected) return null;
 
-            _positions.Clear();
-            _positionsReceived = new TaskCompletionSource<bool>();
-
-            _clientSocket.reqPositions();
-
-            using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
-            var completedTask = await Task.WhenAny(_positionsReceived.Task, Task.Delay(-1, cts.Token));
-
-            if (cts.Token.IsCancellationRequested)
+            var success = await RefreshPositionsAsync();
+            if (!success)
             {
-                _logger.Warn("Timeout waiting for positions from IB");
+                _logger.Warn("Failed to refresh positions from IB. Aborting GetPositionsAsync.");
                 return null;
             }
-
+            
             return _positions.Values.ToList();
+        }
+
+        private async Task<bool> RefreshPositionsAsync()
+        {
+            // Ensure only one refresh happens at a time
+            await _refreshSemaphore.WaitAsync();
+            try
+            {
+                _logger.Debug("Refreshing positions from IB...");
+
+                _refreshTcs = new TaskCompletionSource<bool>();
+                _refreshSeenSymbols = new ConcurrentDictionary<string, byte>();
+                
+                _clientSocket.reqPositions();
+
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                var completedTask = await Task.WhenAny(_refreshTcs.Task, Task.Delay(-1, cts.Token));
+
+                if (cts.Token.IsCancellationRequested)
+                {
+                    _logger.Warn("Timeout waiting for position refresh from IB");
+                    return false;
+                }
+
+                // SWEEP PHASE: Remove positions that were NOT seen in this refresh cycle
+                var allCachedSymbols = _positions.Keys.ToList();
+                foreach (var symbol in allCachedSymbols)
+                {
+                    if (_refreshSeenSymbols != null && !_refreshSeenSymbols.ContainsKey(symbol))
+                    {
+                        // Symbol was in cache but not returned by IB -> It is closed.
+                        if (_positions.TryRemove(symbol, out var removedPos))
+                        {
+                            _logger.Info($"Position closed (detected via refresh sweep): {symbol}");
+                            OnPositionChanged?.Invoke(new PositionChangedEventArgs
+                            {
+                                Symbol = symbol,
+                                OldQuantity = removedPos.Quantity,
+                                NewQuantity = 0,
+                                Timestamp = DateTime.Now
+                            });
+                        }
+                    }
+                }
+                
+                return true;
+            }
+            catch (Exception ex)
+            {
+                _logger.Error($"Error refreshing positions: {ex.Message}", ex);
+                return false;
+            }
+            finally
+            {
+                // Cleanup
+                _refreshSeenSymbols = null;
+                _refreshTcs = null;
+                _refreshSemaphore.Release();
+            }
+        }
+
+        public double GetCachedPosition(string symbol)
+        {
+            return _positions.GetValueOrDefault(symbol)?.Quantity ?? 0;
         }
 
         internal void OnPosition(string account, Contract contract, double position, double avgCost)
         {
             var c2Symbol = _config.GetC2Symbol(contract);
+            
+            // Mark as seen if we are refreshing
+            _refreshSeenSymbols?.TryAdd(c2Symbol, 1);
+            
             var oldPosition = _positions.GetValueOrDefault(c2Symbol)?.Quantity ?? 0;
             
             _logger.Debug($"Position update received: {contract.Symbol} (Local: {contract.LocalSymbol}) -> {c2Symbol} = {position}");
@@ -706,7 +820,7 @@ namespace IBCollective2Sync
                     Quantity = position,
                     AvgCost = avgCost,
                     SecType = contract.SecType,
-                    LastUpdated = DateTime.UtcNow
+                    LastUpdated = DateTime.Now
                 };
             }
             else
@@ -729,7 +843,8 @@ namespace IBCollective2Sync
 
         internal void OnPositionEnd()
         {
-            _positionsReceived?.TrySetResult(true);
+            _logger.Info("Position list received from IB");
+            _refreshTcs?.TrySetResult(true);
         }
 
         internal void OnExecution(Contract contract, Execution execution)
@@ -979,7 +1094,7 @@ namespace IBCollective2Sync
                         Symbol = p.C2Symbol?.FullSymbol ?? "Unknown",
                         Quantity = p.Quantity,
                         SecType = p.C2Symbol?.SymbolType ?? "Unknown",
-                        LastUpdated = DateTime.UtcNow
+                        LastUpdated = DateTime.Now
                     }).ToList() ?? new List<Position>();
 
                     _logger.Debug($"Retrieved {positions.Count} positions from Collective2");
@@ -1115,7 +1230,7 @@ namespace IBCollective2Sync
         public string Symbol { get; set; } = string.Empty;
         public double OldQuantity { get; set; }
         public double NewQuantity { get; set; }
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 
     public class TradeExecutedEventArgs : EventArgs
@@ -1125,7 +1240,7 @@ namespace IBCollective2Sync
         public double Quantity { get; set; }
         public double Price { get; set; }
         public double NewPosition { get; set; }
-        public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        public DateTime Timestamp { get; set; } = DateTime.Now;
     }
 
     public class FileLogger : IDisposable
@@ -1221,7 +1336,7 @@ namespace IBCollective2Sync
 
             try
             {
-                var timestamp = DateTime.UtcNow.ToString("yyyy-MM-dd HH:mm:ss.fff");
+                var timestamp = DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff");
                 var logEntry = $"[{timestamp}] [{level.PadRight(5)}] [{Thread.CurrentThread.ManagedThreadId:D3}] {message}";
                 
                 if (exception != null)
