@@ -632,6 +632,16 @@ namespace IBCollective2Sync
             _clientSocket = new EClientSocket(_wrapper, _signal);
         }
 
+        private void FireAndForget(Task? task, string context)
+        {
+            if (task == null) return;
+            _ = task.ContinueWith(t =>
+            {
+                if (t.IsFaulted)
+                    _logger.Error($"Unhandled exception in event handler [{context}]: {t.Exception?.GetBaseException().Message}", t.Exception?.GetBaseException());
+            }, TaskContinuationOptions.OnlyOnFaulted);
+        }
+
         public async Task ConnectAsync(string host, int port, int clientId)
         {
             await _connectionSemaphore.WaitAsync();
@@ -768,13 +778,13 @@ namespace IBCollective2Sync
                         if (_positions.TryRemove(symbol, out var removedPos))
                         {
                             _logger.Info($"Position closed (detected via refresh sweep): {symbol}");
-                            OnPositionChanged?.Invoke(new PositionChangedEventArgs
+                            FireAndForget(OnPositionChanged?.Invoke(new PositionChangedEventArgs
                             {
                                 Symbol = symbol,
                                 OldQuantity = removedPos.Quantity,
                                 NewQuantity = 0,
                                 Timestamp = DateTime.Now
-                            });
+                            }), $"OnPositionChanged/sweep/{symbol}");
                         }
                     }
                 }
@@ -831,12 +841,12 @@ namespace IBCollective2Sync
             if (Math.Abs(position - oldPosition) > 0.01)
             {
                 _logger.Info($"Position change detected: {c2Symbol} {oldPosition} → {position}");
-                OnPositionChanged?.Invoke(new PositionChangedEventArgs
+                FireAndForget(OnPositionChanged?.Invoke(new PositionChangedEventArgs
                 {
                     Symbol = c2Symbol,
                     OldQuantity = oldPosition,
                     NewQuantity = position
-                });
+                }), $"OnPositionChanged/{c2Symbol}");
             }
         }
 
@@ -853,14 +863,14 @@ namespace IBCollective2Sync
             
             var currentPosition = _positions.GetValueOrDefault(c2Symbol)?.Quantity ?? 0;
             
-            OnTradeExecuted?.Invoke(new TradeExecutedEventArgs
+            FireAndForget(OnTradeExecuted?.Invoke(new TradeExecutedEventArgs
             {
                 Symbol = c2Symbol,
                 Action = execution.Side,
                 Quantity = execution.Shares,
                 Price = execution.Price,
                 NewPosition = currentPosition
-            });
+            }), $"OnTradeExecuted/{c2Symbol}");
         }
 
 
@@ -869,7 +879,7 @@ namespace IBCollective2Sync
         {
             _isConnected = false;
             _logger.Error("IB connection closed");
-            OnConnectionLost?.Invoke();
+            FireAndForget(OnConnectionLost?.Invoke(), "OnConnectionLost");
         }
 
         internal void SetNextOrderId(int orderId)
