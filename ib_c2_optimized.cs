@@ -114,19 +114,18 @@ namespace IBCollective2Sync
 
         private static async Task Cleanup()
         {
-            _logger.Info("Shutting down...");
-            
+            _logger?.Info("Shutting down...");
+
             _cancellationTokenSource.Cancel();
             _syncTimer?.Dispose();
-            
+
             if (_ibClient != null)
             {
                 await _ibClient.DisconnectAsync();
             }
 
+            _logger?.Info("Shutdown complete");
             _logger?.Dispose();
-            
-            _logger.Info("Shutdown complete");
         }
 
         private static async Task MonitorMaintenanceWindow()
