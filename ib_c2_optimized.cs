@@ -1168,7 +1168,8 @@ namespace IBCollective2Sync
                         c2Symbol = new
                         {
                             fullSymbol = symbol,
-                            symbolType = "future" // Assuming futures based on context
+                            // secType param will replace this hardcoded value in the next task
+                            symbolType = "future"
                         }
                     }
                 };
