@@ -41,7 +41,7 @@ namespace IBCollective2Sync
 
 
                 _ibClient = new IBClient(_logger, _config);
-                _c2Client = new Collective2Client(_config.C2ApiKey, _config.C2StrategyId, _logger);
+                _c2Client = new Collective2Client(_config.C2ApiKey, _config.C2StrategyId, _logger, _config.MaxRetryAttempts);
 
                 _ibClient.OnPositionChanged += OnPositionChanged;
                 _ibClient.OnTradeExecuted += OnTradeExecuted;
@@ -82,7 +82,7 @@ namespace IBCollective2Sync
             var retryPolicy = Policy
                 .Handle<Exception>()
                 .WaitAndRetryAsync(
-                    3,
+                    _config.MaxRetryAttempts,
                     retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (exception, timeSpan, retryCount, context) =>
                     {
@@ -1039,7 +1039,7 @@ namespace IBCollective2Sync
             PropertyNameCaseInsensitive = true 
         };
 
-        public Collective2Client(string apiKey, string strategyId, FileLogger logger)
+        public Collective2Client(string apiKey, string strategyId, FileLogger logger, int maxRetryAttempts = 3)
         {
             _apiKey = apiKey;
             _strategyId = strategyId;
@@ -1056,7 +1056,7 @@ namespace IBCollective2Sync
                 .Or<TaskCanceledException>()
                 .Or<HttpRequestException>()
                 .WaitAndRetryAsync(
-                    3,
+                    maxRetryAttempts,
                     retryAttempt => TimeSpan.FromSeconds(Math.Pow(2, retryAttempt)),
                     onRetry: (outcome, timespan, retryCount, context) =>
                     {
