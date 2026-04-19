@@ -19,4 +19,10 @@
     </None>
   </ItemGroup>
 
+  <ItemGroup>
+    <Compile Remove="IBCollective2Sync.Tests\**" />
+    <EmbeddedResource Remove="IBCollective2Sync.Tests\**" />
+    <None Remove="IBCollective2Sync.Tests\**" />
+  </ItemGroup>
+
 </Project>

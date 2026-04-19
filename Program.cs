@@ -312,56 +312,30 @@ namespace IBCollective2Sync
 
         private static async Task ExecutePositionSync(string symbol, double ibQuantity, double c2Quantity, double quantityDiff, string secType)
         {
-            if (Math.Abs(ibQuantity) < _config.MinimumQuantityThreshold)
+            var decision = SyncLogic.DetermineAction(ibQuantity, c2Quantity, _config.MinimumQuantityThreshold);
+            if (decision == null)
             {
-                if (Math.Abs(c2Quantity) > _config.MinimumQuantityThreshold)
-                {
-                    // If C2 is Short (negative), Buy to Close (BTC). If Long (positive), Sell to Close (STC).
-                    string action = c2Quantity < 0 ? "BTC" : "STC";
-                    _logger.Info($"Closing C2 position: {action} {Math.Abs(c2Quantity)} {symbol}");
-                    await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity), secType, _cancellationTokenSource.Token);
-                }
-            }
-            else if (quantityDiff > 0)
-            {
-                // Buying
-                // If C2 is Short (<0), Buy to Close (BTC).
-                // If C2 is Flat or Long (>=0), Buy to Open (BTO).
-                string action = c2Quantity < 0 ? "BTC" : "BTO";
-                _logger.Info($"Increasing C2 position: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), secType, _cancellationTokenSource.Token);
-            }
-            else
-            {
-                // Selling
-                // If C2 is Long (>0), Sell to Close (STC).
-                // If C2 is Flat or Short (<=0), Sell to Open (STO).
-                string action = c2Quantity > 0 ? "STC" : "STO";
-                string logAction = c2Quantity > 0 ? "Reducing C2 Long" : "Increasing C2 Short";
-
-                _logger.Info($"{logAction}: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), secType, _cancellationTokenSource.Token);
+                _logger?.Debug($"No action needed for {symbol}: IB={ibQuantity}, C2={c2Quantity}");
+                return;
             }
 
-            // Post-Trade Verification Delay
+            var (action, quantity) = decision.Value;
+            _logger?.Info($"Submitting C2 signal for {symbol}: {action} {quantity} (IB={ibQuantity}, C2={c2Quantity})");
+            await _c2Client.SubmitSignalWithRetryAsync(symbol, action, quantity, secType, _cancellationTokenSource.Token);
+
             if (_config.PostTradeCheckDelaySeconds > 0)
             {
-                _logger.Info($"Waiting {_config.PostTradeCheckDelaySeconds} seconds for C2 execution verification on {symbol}...");
+                _logger?.Info($"Waiting {_config.PostTradeCheckDelaySeconds}s for C2 execution verification on {symbol}...");
                 await Task.Delay(_config.PostTradeCheckDelaySeconds * 1000, _cancellationTokenSource.Token);
 
-                // Re-fetch C2 positions to verify Sync
                 var freshC2Positions = await _c2Client.GetPositionsWithRetryAsync(_cancellationTokenSource.Token);
                 if (freshC2Positions != null)
                 {
                     var freshC2Qty = freshC2Positions.FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0;
                     if (Math.Abs(ibQuantity - freshC2Qty) < _config.MinimumQuantityThreshold)
-                    {
-                         _logger.Info($"Verification Successful: {symbol} is in sync (IB={ibQuantity}, C2={freshC2Qty}).");
-                    }
+                        _logger?.Info($"Verification Successful: {symbol} in sync (IB={ibQuantity}, C2={freshC2Qty}).");
                     else
-                    {
-                         _logger.Warn($"Verification Warning: {symbol} execution might be pending or failed. IB={ibQuantity}, C2={freshC2Qty}.");
-                    }
+                        _logger?.Warn($"Verification Warning: {symbol} may be pending. IB={ibQuantity}, C2={freshC2Qty}.");
                 }
             }
         }
