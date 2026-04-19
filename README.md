@@ -11,6 +11,8 @@ A high-performance C# application that synchronizes an Interactive Brokers (IB) 
     -   **Sync Safety**: Aborts synchronization immediately if connection to IB or C2 fails, preventing erroneous "liquidate all" signals.
     -   **Weekend Blackout**: Automatically disables syncing during Futures market close (Friday 6:00 PM EST to Sunday 5:00 PM EST) to prevent errors.
     -   **Double-Check Verification**: Compares quantities before submitting orders to minimize unnecessary signals.
+-   **Resilient API Client**: Polly-based retry with exponential backoff and a circuit breaker (opens after 5 failures) for the Collective2 API.
+-   **Multi-Asset Symbol Type**: Automatically maps IB `SecType` to the correct Collective2 `symbolType` (`FUT→future`, `STK→stock`, `OPT→option`, `CASH→forex`).
 -   **Daily Logging**: Rotates log files daily (`IBCollective2Sync_YYYY-MM-DD.log`) for clean and manageable audit trails.
 
 ## Prerequisites
@@ -37,6 +39,8 @@ Configure the application via `appsettings.json`:
   "TradeExecutionDelayMs": 1000,
   "MinimumQuantityThreshold": 0.01,
   "SignalSubmissionDelayMs": 100,
+  "MaxRetryAttempts": 3,
+  "PostTradeCheckDelaySeconds": 60,
   "SymbolMappings": {
      "MGC": "@QMGC",
      "MYM": "@QMYM"
@@ -45,13 +49,15 @@ Configure the application via `appsettings.json`:
 ```
 
 ### Key Parameters
-| Parameter | Description |
-| :--- | :--- |
-| `C2ApiKey` | Your Collective2 API Token. |
-| `C2StrategyId` | The ID of the strategy you are signaling. |
-| `IbHost` / `IbPort` | Connection details for TWS/Gateway. |
-| `BackupSyncIntervalMinutes` | How often to perform a full reconciliation (safeguard). |
-| `SymbolMappings` | Custom rules to map IB root symbols to C2 symbols. |
+| Parameter | Default | Description |
+| :--- | :--- | :--- |
+| `C2ApiKey` | — | Your Collective2 API Token. |
+| `C2StrategyId` | — | The ID of the strategy you are signaling. |
+| `IbHost` / `IbPort` | `127.0.0.1` / `7497` | Connection details for TWS/Gateway. |
+| `BackupSyncIntervalMinutes` | `5` | How often to perform a full reconciliation (safeguard). |
+| `MaxRetryAttempts` | `3` | Max retries for IB connection and C2 API calls. |
+| `PostTradeCheckDelaySeconds` | `60` | Seconds to wait after a signal before verifying C2 position. Set `0` to disable. |
+| `SymbolMappings` | `{}` | Custom rules to map IB root symbols to C2 symbols. |
 
 ## Usage
 
