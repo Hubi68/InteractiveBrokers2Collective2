@@ -280,7 +280,7 @@ namespace IBCollective2Sync
                 // This prevents using stale data if multiple events were queued.
                 var newQuantity = _ibClient.GetCachedPosition(symbol);
                 
-                var c2Positions = await _c2Client.GetPositionsWithRetryAsync();
+                var c2Positions = await _c2Client.GetPositionsWithRetryAsync(_cancellationTokenSource.Token);
                 var c2Position = c2Positions?.FirstOrDefault(p => p.Symbol == symbol);
                 var c2Quantity = c2Position?.Quantity ?? 0;
 
@@ -327,7 +327,7 @@ namespace IBCollective2Sync
                     // If C2 is Short (negative), Buy to Close (BTC). If Long (positive), Sell to Close (STC).
                     string action = c2Quantity < 0 ? "BTC" : "STC";
                     _logger.Info($"Closing C2 position: {action} {Math.Abs(c2Quantity)} {symbol}");
-                    await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity));
+                    await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity), cancellationToken: _cancellationTokenSource.Token);
                 }
             }
             else if (quantityDiff > 0)
@@ -337,7 +337,7 @@ namespace IBCollective2Sync
                 // If C2 is Flat or Long (>=0), Buy to Open (BTO).
                 string action = c2Quantity < 0 ? "BTC" : "BTO";
                 _logger.Info($"Increasing C2 position: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff));
+                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), cancellationToken: _cancellationTokenSource.Token);
             }
             else
             {
@@ -348,7 +348,7 @@ namespace IBCollective2Sync
                 string logAction = c2Quantity > 0 ? "Reducing C2 Long" : "Increasing C2 Short";
 
                 _logger.Info($"{logAction}: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff));
+                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), cancellationToken: _cancellationTokenSource.Token);
             }
 
             // Post-Trade Verification Delay
@@ -358,7 +358,7 @@ namespace IBCollective2Sync
                 await Task.Delay(_config.PostTradeCheckDelaySeconds * 1000, _cancellationTokenSource.Token);
 
                 // Re-fetch C2 positions to verify Sync
-                var freshC2Positions = await _c2Client.GetPositionsWithRetryAsync();
+                var freshC2Positions = await _c2Client.GetPositionsWithRetryAsync(_cancellationTokenSource.Token);
                 if (freshC2Positions != null)
                 {
                     var freshC2Qty = freshC2Positions.FirstOrDefault(p => p.Symbol == symbol)?.Quantity ?? 0;
@@ -393,7 +393,7 @@ namespace IBCollective2Sync
                 Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] Starting full portfolio sync...");
 
                 var ibPositionsTask = _ibClient.GetPositionsAsync();
-                var c2PositionsTask = _c2Client.GetPositionsWithRetryAsync();
+                var c2PositionsTask = _c2Client.GetPositionsWithRetryAsync(_cancellationTokenSource.Token);
 
                 await Task.WhenAll(ibPositionsTask, c2PositionsTask);
 
@@ -1088,19 +1088,19 @@ namespace IBCollective2Sync
             _logger.Info($"Collective2Client initialized for strategy: {strategyId}");
         }
 
-        public async Task<List<Position>?> GetPositionsWithRetryAsync()
+        public async Task<List<Position>?> GetPositionsWithRetryAsync(CancellationToken cancellationToken = default)
         {
             try
             {
-                await _rateLimiter.WaitAsync();
+                await _rateLimiter.WaitAsync(cancellationToken);
 
                 _logger.Debug("Requesting positions from Collective2 V4 API");
                 // V4 Endpoint: /Strategies/GetStrategyOpenPositions
                 // Parameter: StrategyIds (plural, array)
                 var url = $"{BaseUrl}/Strategies/GetStrategyOpenPositions?StrategyIds={_strategyId}";
 
-                var response = await _resilientPolicy.ExecuteAsync(async () =>
-                    await _httpClient.GetAsync(url));
+                var response = await _resilientPolicy.ExecuteAsync(async ct =>
+                    await _httpClient.GetAsync(url, ct), cancellationToken);
 
                 if (response.IsSuccessStatusCode)
                 {
@@ -1141,11 +1141,11 @@ namespace IBCollective2Sync
             }
         }
 
-        public async Task<bool> SubmitSignalWithRetryAsync(string symbol, string action, double quantity)
+        public async Task<bool> SubmitSignalWithRetryAsync(string symbol, string action, double quantity, string secType = "FUT", CancellationToken cancellationToken = default)
         {
             try
             {
-                await _rateLimiter.WaitAsync();
+                await _rateLimiter.WaitAsync(cancellationToken);
 
                 _logger.Info($"Submitting C2 signal: {action} {quantity} {symbol}");
 
@@ -1178,8 +1178,8 @@ namespace IBCollective2Sync
 
                 _logger.Debug($"C2 Signal payload: {json}");
 
-                var response = await _resilientPolicy.ExecuteAsync(async () =>
-                    await _httpClient.PostAsync($"{BaseUrl}/Strategies/NewStrategyOrder", content));
+                var response = await _resilientPolicy.ExecuteAsync(async ct =>
+                    await _httpClient.PostAsync($"{BaseUrl}/Strategies/NewStrategyOrder", content, ct), cancellationToken);
 
                 var responseText = await response.Content.ReadAsStringAsync();
 
