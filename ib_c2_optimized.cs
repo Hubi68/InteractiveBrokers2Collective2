@@ -278,8 +278,10 @@ namespace IBCollective2Sync
 
                 // CRITICAL FIX: Always fetch the latest cached position from IB client inside the lock.
                 // This prevents using stale data if multiple events were queued.
-                var newQuantity = _ibClient.GetCachedPosition(symbol);
-                
+                var cachedPosition = _ibClient.GetCachedPositionFull(symbol);
+                var newQuantity = cachedPosition?.Quantity ?? 0;
+                var secType = cachedPosition?.SecType ?? "FUT";
+
                 var c2Positions = await _c2Client.GetPositionsWithRetryAsync(_cancellationTokenSource.Token);
                 var c2Position = c2Positions?.FirstOrDefault(p => p.Symbol == symbol);
                 var c2Quantity = c2Position?.Quantity ?? 0;
@@ -293,8 +295,8 @@ namespace IBCollective2Sync
                     var syncMessage = $"Syncing {symbol}: IB={newQuantity}, C2={c2Quantity}, Diff={quantityDiff}";
                     _logger.Info(syncMessage);
                     Console.WriteLine($"[{DateTime.Now:HH:mm:ss}] {syncMessage}");
-                    
-                    await ExecutePositionSync(symbol, newQuantity, c2Quantity, quantityDiff);
+
+                    await ExecutePositionSync(symbol, newQuantity, c2Quantity, quantityDiff, secType);
                 }
                 else
                 {
@@ -318,7 +320,7 @@ namespace IBCollective2Sync
             }
         }
 
-        private static async Task ExecutePositionSync(string symbol, double ibQuantity, double c2Quantity, double quantityDiff)
+        private static async Task ExecutePositionSync(string symbol, double ibQuantity, double c2Quantity, double quantityDiff, string secType)
         {
             if (Math.Abs(ibQuantity) < _config.MinimumQuantityThreshold)
             {
@@ -327,7 +329,7 @@ namespace IBCollective2Sync
                     // If C2 is Short (negative), Buy to Close (BTC). If Long (positive), Sell to Close (STC).
                     string action = c2Quantity < 0 ? "BTC" : "STC";
                     _logger.Info($"Closing C2 position: {action} {Math.Abs(c2Quantity)} {symbol}");
-                    await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity), cancellationToken: _cancellationTokenSource.Token);
+                    await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(c2Quantity), secType, _cancellationTokenSource.Token);
                 }
             }
             else if (quantityDiff > 0)
@@ -337,7 +339,7 @@ namespace IBCollective2Sync
                 // If C2 is Flat or Long (>=0), Buy to Open (BTO).
                 string action = c2Quantity < 0 ? "BTC" : "BTO";
                 _logger.Info($"Increasing C2 position: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), cancellationToken: _cancellationTokenSource.Token);
+                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), secType, _cancellationTokenSource.Token);
             }
             else
             {
@@ -348,7 +350,7 @@ namespace IBCollective2Sync
                 string logAction = c2Quantity > 0 ? "Reducing C2 Long" : "Increasing C2 Short";
 
                 _logger.Info($"{logAction}: {action} {Math.Abs(quantityDiff)} {symbol}");
-                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), cancellationToken: _cancellationTokenSource.Token);
+                await _c2Client.SubmitSignalWithRetryAsync(symbol, action, Math.Abs(quantityDiff), secType, _cancellationTokenSource.Token);
             }
 
             // Post-Trade Verification Delay
@@ -810,6 +812,11 @@ namespace IBCollective2Sync
             return _positions.GetValueOrDefault(symbol)?.Quantity ?? 0;
         }
 
+        public Position? GetCachedPositionFull(string symbol)
+        {
+            return _positions.GetValueOrDefault(symbol);
+        }
+
         internal void OnPosition(string account, Contract contract, double position, double avgCost)
         {
             var c2Symbol = _config.GetC2Symbol(contract);
@@ -1166,6 +1173,15 @@ namespace IBCollective2Sync
                 var actionUpper = action.ToUpper();
                 var sideStr = (actionUpper.Contains("BUY") || actionUpper.StartsWith("B")) ? "1" : "2";
 
+                var c2SymbolType = secType switch
+                {
+                    "STK" => "stock",
+                    "OPT" => "option",
+                    "FUT" => "future",
+                    "CASH" => "forex",
+                    _ => "future"
+                };
+
                 var requestBody = new
                 {
                     order = new
@@ -1178,8 +1194,7 @@ namespace IBCollective2Sync
                         c2Symbol = new
                         {
                             fullSymbol = symbol,
-                            // secType param will replace this hardcoded value in the next task
-                            symbolType = "future"
+                            symbolType = c2SymbolType
                         }
                     }
                 };
